@@ -79,58 +79,9 @@ const emptyForm: ReviewRecord = {
   updatedAt: "",
 };
 
-const initialRecords: ReviewRecord[] = [
-  {
-    ...emptyForm,
-    id: "sample-1",
-    subject: "英語",
-    practiceDate: "2026-08-12",
-    duration: "42分",
-    university: "明治大学",
-    faculty: "文学部",
-    examType: "一般選抜",
-    year: "2025",
-    majorQuestion: "2",
-    minorQuestion: "(3)",
-    step1: "長文中の筆者の主張を、接続表現と段落構成から判断する問題。",
-    step2: "however の後ろだけを根拠にして、前段落との対比を十分に見なかった。",
-    step3: "第3段落の譲歩を踏まえ、第4段落の結論文に戻って選択肢を比較する。",
-    lossReasons: ["本文・資料の読み違い", "根拠不足"],
-    lossDetail: "根拠にした一文が弱く、段落全体の流れを使えていなかった。",
-    step5: "逆接語を見つけたら、前後2文だけでなく段落の役割を一言メモしてから選ぶ。",
-    tags: ["長文読解", "根拠確認", "時間配分"],
-    colorLabel: "#d96060",
-    reviewed: false,
-    createdAt: "2026-08-12T10:00:00.000Z",
-    updatedAt: "2026-08-12T10:00:00.000Z",
-  },
-  {
-    ...emptyForm,
-    id: "sample-2",
-    subject: "日本史",
-    practiceDate: "2026-08-14",
-    duration: "18分",
-    university: "東京都立大学",
-    faculty: "法学部",
-    examType: "前期",
-    year: "2024",
-    majorQuestion: "1",
-    minorQuestion: "(2)",
-    branch: "a",
-    step1: "江戸時代の文化史について、人物と作品名の対応を問う問題。",
-    step2: "似た用語の記憶だけで選び、時代の前後関係を確認しなかった。",
-    step3: "元禄文化と化政文化を時期、担い手、代表作で分けて整理する。",
-    lossReasons: ["知識不足", "語句・用語の混同"],
-    lossDetail: "作品名は覚えていたが、文化区分と人物の対応が曖昧だった。",
-    step5: "文化史は人物、作品、時期を3列でまとめ、翌日に同じ表を白紙再現する。",
-    tags: ["文化史", "江戸時代", "用語整理"],
-    colorLabel: "#4f8edb",
-    reviewed: true,
-    reviewedDate: "2026-08-16",
-    createdAt: "2026-08-14T10:00:00.000Z",
-    updatedAt: "2026-08-16T10:00:00.000Z",
-  },
-];
+const initialRecords: ReviewRecord[] = [];
+const seededRecordIds = new Set(["sample-1", "sample-2"]);
+const seededUniversityNames = new Set(["明治大学", "東京都立大学"]);
 
 const lossReasonOptions = [
   "知識不足",
@@ -208,16 +159,24 @@ function makeId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function removeSeededBoardColors(settings: Settings) {
+  return {
+    ...settings,
+    boardColors: Object.fromEntries(
+      Object.entries(settings.boardColors).filter(
+        ([university]) => !seededUniversityNames.has(university),
+      ),
+    ),
+  };
+}
+
 export default function Home() {
   const [records, setRecords] = useState<ReviewRecord[]>([]);
   const [form, setForm] = useState<ReviewRecord>(emptyForm);
   const [settings, setSettings] = useState<Settings>({
     theme: "#e7f1fb",
     customTheme: "#e7f1fb",
-    boardColors: {
-      明治大学: "#d96060",
-      東京都立大学: "#4f8edb",
-    },
+    boardColors: {},
   });
   const [activeView, setActiveView] = useState("input");
   const [search, setSearch] = useState<SearchState>(blankSearch);
@@ -233,8 +192,11 @@ export default function Home() {
     const savedSettings = window.localStorage.getItem(settingsKey);
     const savedDraft = window.localStorage.getItem(draftKey);
 
-    setRecords(savedRecords ? JSON.parse(savedRecords) : initialRecords);
-    if (savedSettings) setSettings(JSON.parse(savedSettings));
+    const loadedRecords: ReviewRecord[] = savedRecords
+      ? JSON.parse(savedRecords)
+      : initialRecords;
+    setRecords(loadedRecords.filter((record) => !seededRecordIds.has(record.id)));
+    if (savedSettings) setSettings(removeSeededBoardColors(JSON.parse(savedSettings)));
     if (savedDraft) setForm({ ...emptyForm, ...JSON.parse(savedDraft) });
     setIsHydrated(true);
   }, []);
