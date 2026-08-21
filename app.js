@@ -90,6 +90,8 @@ let state = {
   },
   selectedBoard: "",
   selectedRecord: null,
+  shareCode: "",
+  importCode: "",
 };
 
 seededUniversityNames.forEach((university) => {
@@ -118,6 +120,29 @@ function today() {
 
 function makeId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function encodeShareCode(payload) {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
+}
+
+function decodeShareCode(code) {
+  const binary = atob(code.trim());
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const payload = JSON.parse(new TextDecoder().decode(bytes));
+  if (
+    payload?.version !== 1 ||
+    !Array.isArray(payload.records) ||
+    typeof payload.settings?.boardColors !== "object"
+  ) {
+    throw new Error("invalid share code");
+  }
+  return payload;
 }
 
 function unique(values) {
@@ -652,7 +677,97 @@ function renderSettings() {
       el("label", { class: "theme-card custom-theme" }, [custom, document.createTextNode("自由選択")]),
     ]),
     el("div", { class: "board-color-list" }, boardColors),
+    renderSharePanel(),
   ]);
+}
+
+function renderSharePanel() {
+  const exportArea = el("textarea", {
+    readonly: true,
+    placeholder: "共有コードを作成するとここに表示されます",
+  });
+  exportArea.value = state.shareCode;
+
+  const importArea = el("textarea", {
+    placeholder: "別の端末で作成した共有コードを貼り付け",
+    oninput: (event) => {
+      state.importCode = event.target.value;
+    },
+  });
+  importArea.value = state.importCode;
+
+  return el("div", { class: "share-panel" }, [
+    sectionTitle("Share", "共有コード"),
+    el("div", { class: "share-grid" }, [
+      el("label", { text: "書き出しコード" }, [exportArea]),
+      el("label", { text: "読み込みコード" }, [importArea]),
+    ]),
+    el("div", { class: "actions" }, [
+      el("button", {
+        type: "button",
+        class: "ghost",
+        text: "共有コードを作成",
+        onclick: createShareCode,
+      }),
+      el("button", {
+        type: "button",
+        class: "ghost",
+        text: "読み込んで追加",
+        onclick: () => importShareCode("append"),
+      }),
+      el("button", {
+        type: "button",
+        text: "全て置き換え",
+        onclick: () => importShareCode("replace"),
+      }),
+    ]),
+  ]);
+}
+
+function createShareCode() {
+  state.shareCode = encodeShareCode({
+    version: 1,
+    records: state.records,
+    settings: state.settings,
+    exportedAt: new Date().toISOString(),
+  });
+  render();
+}
+
+function importShareCode(mode) {
+  try {
+    const payload = decodeShareCode(state.importCode);
+    const importedRecords = payload.records.filter((record) => !seededRecordIds.has(record.id));
+
+    if (mode === "replace") {
+      if (!confirm("今ある記録をすべて共有コードの内容に置き換えますか？")) return;
+      state.records = importedRecords;
+    } else {
+      const knownIds = new Set(state.records.map((record) => record.id));
+      state.records = [
+        ...importedRecords.filter((record) => !knownIds.has(record.id)),
+        ...state.records,
+      ];
+    }
+
+    state.settings = {
+      ...state.settings,
+      ...payload.settings,
+      boardColors: {
+        ...state.settings.boardColors,
+        ...payload.settings.boardColors,
+      },
+    };
+    seededUniversityNames.forEach((university) => {
+      delete state.settings.boardColors[university];
+    });
+    state.importCode = "";
+    save();
+    alert("共有コードを読み込みました。");
+    render();
+  } catch {
+    alert("共有コードを読み込めませんでした。コードをもう一度確認してください。");
+  }
 }
 
 function renderGrid(records) {
