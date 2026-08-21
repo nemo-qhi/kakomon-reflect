@@ -1,6 +1,8 @@
 const storageKey = "kakomon-review-records";
 const settingsKey = "kakomon-review-settings";
 const draftKey = "kakomon-review-draft";
+const shareApiBase = "https://kakomon-reflection-board.sakuradrop66.chatgpt.site";
+const remoteShareCodePattern = /^[A-Z0-9]{6}$/;
 
 const lossReasonOptions = [
   "知識不足",
@@ -243,6 +245,28 @@ function decodeLegacyShareCode(code) {
   const binary = atob(code.trim());
   const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
   return JSON.parse(new TextDecoder().decode(bytes));
+}
+
+async function createRemoteShareCode(payload) {
+  const response = await fetch(`${shareApiBase}/api/share`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payload }),
+  });
+  if (!response.ok) throw new Error("share save failed");
+  const body = await response.json();
+  if (!body.code || !remoteShareCodePattern.test(body.code)) {
+    throw new Error("invalid share code response");
+  }
+  return body.code;
+}
+
+async function loadRemoteShareCode(code) {
+  const response = await fetch(`${shareApiBase}/api/share/${code}`);
+  if (!response.ok) throw new Error("share code not found");
+  const body = await response.json();
+  if (!body.payload) throw new Error("invalid share payload");
+  return body.payload;
 }
 
 function unique(values) {
@@ -784,12 +808,12 @@ function renderSettings() {
 function renderSharePanel() {
   const exportArea = el("textarea", {
     readonly: true,
-    placeholder: "共有コードを作成するとここに表示されます",
+    placeholder: "6文字コードを発行するとここに表示されます",
   });
   exportArea.value = state.shareCode;
 
   const importArea = el("textarea", {
-    placeholder: "別の端末で作成した共有コードを貼り付け",
+    placeholder: "6文字コードを入力。古い長いコードも貼り付け可",
     oninput: (event) => {
       state.importCode = event.target.value;
     },
@@ -806,7 +830,7 @@ function renderSharePanel() {
       el("button", {
         type: "button",
         class: "ghost",
-        text: "共有コードを作成",
+        text: "6文字コードを発行",
         onclick: createShareCode,
       }),
       el("button", {
@@ -825,18 +849,25 @@ function renderSharePanel() {
 }
 
 async function createShareCode() {
-  state.shareCode = await encodeShareCode({
-    version: 1,
-    records: state.records,
-    settings: state.settings,
-    exportedAt: new Date().toISOString(),
-  });
-  render();
+  try {
+    state.shareCode = await createRemoteShareCode({
+      version: 1,
+      records: state.records,
+      settings: state.settings,
+      exportedAt: new Date().toISOString(),
+    });
+    render();
+  } catch {
+    alert("共有コードを発行できませんでした。少し待ってからもう一度試してください。");
+  }
 }
 
 async function importShareCode(mode) {
   try {
-    const payload = await decodeShareCode(state.importCode);
+    const normalizedCode = state.importCode.trim().toUpperCase();
+    const payload = remoteShareCodePattern.test(normalizedCode)
+      ? await loadRemoteShareCode(normalizedCode)
+      : await decodeShareCode(state.importCode);
     const importedRecords = payload.records.filter((record) => !seededRecordIds.has(record.id));
 
     if (mode === "replace") {
