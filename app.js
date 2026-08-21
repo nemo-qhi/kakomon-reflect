@@ -122,19 +122,113 @@ function makeId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function encodeShareCode(payload) {
-  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+const recordFieldOrder = [
+  "id",
+  "subject",
+  "practiceDate",
+  "duration",
+  "university",
+  "faculty",
+  "examType",
+  "year",
+  "majorQuestion",
+  "minorQuestion",
+  "branch",
+  "step1",
+  "step2",
+  "step3",
+  "lossReasons",
+  "lossDetail",
+  "step5",
+  "tags",
+  "colorLabel",
+  "reviewed",
+  "reviewedDate",
+  "createdAt",
+  "updatedAt",
+];
+
+function bytesToBase64Url(bytes) {
   let binary = "";
   bytes.forEach((byte) => {
     binary += String.fromCharCode(byte);
   });
-  return btoa(binary);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 
-function decodeShareCode(code) {
-  const binary = atob(code.trim());
-  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-  const payload = JSON.parse(new TextDecoder().decode(bytes));
+function base64UrlToBytes(value) {
+  const base64 = value.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function compactPayload(payload) {
+  return {
+    v: 2,
+    r: payload.records.map((record) => recordFieldOrder.map((field) => record[field])),
+    s: {
+      t: payload.settings.theme,
+      c: payload.settings.customTheme,
+      b: payload.settings.boardColors,
+    },
+    e: payload.exportedAt,
+  };
+}
+
+function expandCompactPayload(payload) {
+  return {
+    version: 1,
+    records: payload.r.map((values) => {
+      const record = { ...emptyForm };
+      recordFieldOrder.forEach((field, index) => {
+        record[field] = values[index] ?? emptyForm[field];
+      });
+      record.lossReasons = Array.isArray(record.lossReasons) ? record.lossReasons : [];
+      record.tags = Array.isArray(record.tags) ? record.tags : [];
+      record.reviewed = Boolean(record.reviewed);
+      return record;
+    }),
+    settings: {
+      theme: payload.s.t || "#e7f1fb",
+      customTheme: payload.s.c || "#e7f1fb",
+      boardColors: payload.s.b || {},
+    },
+    exportedAt: payload.e || new Date().toISOString(),
+  };
+}
+
+async function gzipText(text) {
+  if (!("CompressionStream" in globalThis)) return null;
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  return bytesToBase64Url(new Uint8Array(await new Response(stream).arrayBuffer()));
+}
+
+async function ungzipText(value) {
+  if (!("DecompressionStream" in globalThis)) {
+    throw new Error("decompression unavailable");
+  }
+  const stream = new Blob([base64UrlToBytes(value)])
+    .stream()
+    .pipeThrough(new DecompressionStream("gzip"));
+  return await new Response(stream).text();
+}
+
+async function encodeShareCode(payload) {
+  const compactJson = JSON.stringify(compactPayload(payload));
+  const compressed = await gzipText(compactJson);
+  if (compressed) return `KR2.${compressed}`;
+  return `KR1.${bytesToBase64Url(new TextEncoder().encode(compactJson))}`;
+}
+
+async function decodeShareCode(code) {
+  const normalized = code.trim();
+  const payload = normalized.startsWith("KR2.")
+    ? expandCompactPayload(JSON.parse(await ungzipText(normalized.slice(4))))
+    : normalized.startsWith("KR1.")
+      ? expandCompactPayload(JSON.parse(new TextDecoder().decode(base64UrlToBytes(normalized.slice(4)))))
+      : decodeLegacyShareCode(normalized);
+
   if (
     payload?.version !== 1 ||
     !Array.isArray(payload.records) ||
@@ -143,6 +237,12 @@ function decodeShareCode(code) {
     throw new Error("invalid share code");
   }
   return payload;
+}
+
+function decodeLegacyShareCode(code) {
+  const binary = atob(code.trim());
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
 
 function unique(values) {
@@ -724,8 +824,8 @@ function renderSharePanel() {
   ]);
 }
 
-function createShareCode() {
-  state.shareCode = encodeShareCode({
+async function createShareCode() {
+  state.shareCode = await encodeShareCode({
     version: 1,
     records: state.records,
     settings: state.settings,
@@ -734,9 +834,9 @@ function createShareCode() {
   render();
 }
 
-function importShareCode(mode) {
+async function importShareCode(mode) {
   try {
-    const payload = decodeShareCode(state.importCode);
+    const payload = await decodeShareCode(state.importCode);
     const importedRecords = payload.records.filter((record) => !seededRecordIds.has(record.id));
 
     if (mode === "replace") {
