@@ -611,6 +611,27 @@ textarea {
   background: var(--soft);
 }
 
+.share-panel {
+  margin-top: 22px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+
+.share-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.share-grid textarea {
+  min-height: 150px;
+  font-family: var(--font-geist-mono), Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  word-break: break-all;
+}
+
 .modal-backdrop {
   position: fixed;
   z-index: 20;
@@ -752,6 +773,7 @@ textarea {
   .board-tools,
   .theme-grid,
   .board-color-list,
+  .share-grid,
   .detail-grid {
     grid-template-columns: 1fr;
   }

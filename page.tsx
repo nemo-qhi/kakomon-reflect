@@ -53,6 +53,13 @@ type SearchState = {
   reviewed: string;
 };
 
+type SharePayload = {
+  version: 1;
+  records: ReviewRecord[];
+  settings: Settings;
+  exportedAt: string;
+};
+
 const emptyForm: ReviewRecord = {
   id: "",
   subject: "",
@@ -159,6 +166,32 @@ function makeId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+function encodeShareCode(payload: SharePayload) {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
+}
+
+function decodeShareCode(code: string): SharePayload {
+  const normalized = code.trim();
+  const binary = atob(normalized);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  const payload = JSON.parse(new TextDecoder().decode(bytes));
+
+  if (
+    payload?.version !== 1 ||
+    !Array.isArray(payload.records) ||
+    typeof payload.settings?.boardColors !== "object"
+  ) {
+    throw new Error("invalid share code");
+  }
+
+  return payload;
+}
+
 function removeSeededBoardColors(settings: Settings) {
   return {
     ...settings,
@@ -185,6 +218,8 @@ export default function Home() {
   );
   const [selectedBoard, setSelectedBoard] = useState("");
   const [tagInput, setTagInput] = useState("");
+  const [shareCode, setShareCode] = useState("");
+  const [importCode, setImportCode] = useState("");
   const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
@@ -384,6 +419,56 @@ export default function Home() {
     setSearch({ ...blankSearch, tag });
     setActiveView("search");
     setSelectedRecord(null);
+  }
+
+  function createShareCode() {
+    setShareCode(
+      encodeShareCode({
+        version: 1,
+        records,
+        settings,
+        exportedAt: new Date().toISOString(),
+      }),
+    );
+  }
+
+  function importShareCode(mode: "append" | "replace") {
+    try {
+      const payload = decodeShareCode(importCode);
+      const importedRecords = payload.records.filter(
+        (record) => !seededRecordIds.has(record.id),
+      );
+
+      if (mode === "replace") {
+        if (!window.confirm("今ある記録をすべて共有コードの内容に置き換えますか？")) {
+          return;
+        }
+        setRecords(importedRecords);
+      } else {
+        setRecords((current) => {
+          const knownIds = new Set(current.map((record) => record.id));
+          return [
+            ...importedRecords.filter((record) => !knownIds.has(record.id)),
+            ...current,
+          ];
+        });
+      }
+
+      setSettings((current) =>
+        removeSeededBoardColors({
+          ...current,
+          ...payload.settings,
+          boardColors: {
+            ...current.boardColors,
+            ...payload.settings.boardColors,
+          },
+        }),
+      );
+      setImportCode("");
+      window.alert("共有コードを読み込みました。");
+    } catch {
+      window.alert("共有コードを読み込めませんでした。コードをもう一度確認してください。");
+    }
   }
 
   const tagSuggestions = allTags
@@ -733,6 +818,41 @@ export default function Home() {
                 />
               </label>
             ))}
+          </div>
+          <div className="share-panel">
+            <div className="section-title">
+              <p>Share</p>
+              <h2>共有コード</h2>
+            </div>
+            <div className="share-grid">
+              <label>
+                書き出しコード
+                <textarea
+                  readOnly
+                  value={shareCode}
+                  placeholder="共有コードを作成するとここに表示されます"
+                />
+              </label>
+              <label>
+                読み込みコード
+                <textarea
+                  value={importCode}
+                  onChange={(event) => setImportCode(event.target.value)}
+                  placeholder="別の端末で作成した共有コードを貼り付け"
+                />
+              </label>
+            </div>
+            <div className="actions">
+              <button type="button" className="ghost" onClick={createShareCode}>
+                共有コードを作成
+              </button>
+              <button type="button" className="ghost" onClick={() => importShareCode("append")}>
+                読み込んで追加
+              </button>
+              <button type="button" onClick={() => importShareCode("replace")}>
+                全て置き換え
+              </button>
+            </div>
           </div>
         </section>
       )}
