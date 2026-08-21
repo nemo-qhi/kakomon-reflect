@@ -1,58 +1,73 @@
-import { desc } from "drizzle-orm";
-import { getDb } from "../../../../../db";
-import { notes } from "../../../db/schema";
+import { env } from "cloudflare:workers";
 
-function toRouteErrorMessage(error: unknown) {
-  const message = error instanceof Error ? error.message : "Unexpected error";
-  const detail =
-    error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
-  const combined = `${message}\n${detail}`;
+const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const codePattern = /^[A-Z0-9]{6}$/;
+const maxPayloadLength = 300_000;
 
-  if (combined.includes("no such table") || combined.includes('from "notes"')) {
-    return "The notes table is unavailable. Generate the migration locally with `npm run db:generate`, then deploy so the platform can apply the generated SQL to the real D1 database.";
-  }
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
 
-  return message;
+function json(body: unknown, init: ResponseInit = {}) {
+  return Response.json(body, {
+    ...init,
+    headers: {
+      ...corsHeaders,
+      ...(init.headers ?? {}),
+    },
+  });
 }
 
-export async function GET() {
-  try {
-    const db = getDb();
-    const rows = await db
-      .select()
-      .from(notes)
-      .orderBy(desc(notes.createdAt), desc(notes.id))
-      .limit(20);
+async function ensureShareTable() {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS share_codes (
+      code TEXT PRIMARY KEY,
+      payload TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+  ).run();
+}
 
-    return Response.json({ notes: rows });
-  } catch (error) {
-    return Response.json(
-      { error: toRouteErrorMessage(error) },
-      { status: 500 }
-    );
-  }
+function createCode() {
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
+}
+
+export function OPTIONS() {
+  return new Response(null, { headers: corsHeaders });
 }
 
 export async function POST(request: Request) {
   try {
-    const payload = (await request.json()) as {
-      title?: string;
-      content?: string;
-    };
-    const title = payload.title?.trim() ?? "";
-    const content = payload.content?.trim() ?? "";
+    await ensureShareTable();
 
-    if (!title) {
-      return Response.json({ error: "title is required" }, { status: 400 });
+    const body = (await request.json()) as { payload?: unknown };
+    const payload = JSON.stringify(body.payload);
+
+    if (!body.payload || payload.length > maxPayloadLength) {
+      return json({ error: "invalid payload" }, { status: 400 });
     }
 
-    const db = getDb();
-    const [note] = await db.insert(notes).values({ title, content }).returning();
-    return Response.json({ note }, { status: 201 });
-  } catch (error) {
-    return Response.json(
-      { error: toRouteErrorMessage(error) },
-      { status: 500 }
-    );
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const code = createCode();
+      if (!codePattern.test(code)) continue;
+
+      const result = await env.DB.prepare(
+        "INSERT OR IGNORE INTO share_codes (code, payload, created_at) VALUES (?, ?, ?)",
+      )
+        .bind(code, payload, new Date().toISOString())
+        .run();
+
+      if (result.meta.changes === 1) {
+        return json({ code });
+      }
+    }
+
+    return json({ error: "could not create code" }, { status: 503 });
+  } catch {
+    return json({ error: "share code save failed" }, { status: 500 });
   }
 }

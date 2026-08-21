@@ -141,6 +141,7 @@ const themePresets = [
 const storageKey = "kakomon-review-records";
 const settingsKey = "kakomon-review-settings";
 const draftKey = "kakomon-review-draft";
+const remoteShareCodePattern = /^[A-Z0-9]{6}$/;
 
 const recordFieldOrder = [
   "id",
@@ -306,6 +307,29 @@ async function decodeShareCode(code: string): Promise<SharePayload> {
   }
 
   return payload;
+}
+
+async function createRemoteShareCode(payload: SharePayload) {
+  const response = await fetch("/api/share", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ payload }),
+  });
+
+  if (!response.ok) throw new Error("share save failed");
+  const body = (await response.json()) as { code?: string };
+  if (!body.code || !remoteShareCodePattern.test(body.code)) {
+    throw new Error("invalid share code response");
+  }
+  return body.code;
+}
+
+async function loadRemoteShareCode(code: string): Promise<SharePayload> {
+  const response = await fetch(`/api/share/${code}`);
+  if (!response.ok) throw new Error("share code not found");
+  const body = (await response.json()) as { payload?: SharePayload };
+  if (!body.payload) throw new Error("invalid share payload");
+  return body.payload;
 }
 
 function removeSeededBoardColors(settings: Settings) {
@@ -538,19 +562,26 @@ export default function Home() {
   }
 
   async function createShareCode() {
-    setShareCode(
-      await encodeShareCode({
-        version: 1,
-        records,
-        settings,
-        exportedAt: new Date().toISOString(),
-      }),
-    );
+    try {
+      setShareCode(
+        await createRemoteShareCode({
+          version: 1,
+          records,
+          settings,
+          exportedAt: new Date().toISOString(),
+        }),
+      );
+    } catch {
+      window.alert("共有コードを発行できませんでした。少し待ってからもう一度試してください。");
+    }
   }
 
   async function importShareCode(mode: "append" | "replace") {
     try {
-      const payload = await decodeShareCode(importCode);
+      const normalizedCode = importCode.trim().toUpperCase();
+      const payload = remoteShareCodePattern.test(normalizedCode)
+        ? await loadRemoteShareCode(normalizedCode)
+        : await decodeShareCode(importCode);
       const importedRecords = payload.records.filter(
         (record) => !seededRecordIds.has(record.id),
       );
@@ -946,7 +977,7 @@ export default function Home() {
                 <textarea
                   readOnly
                   value={shareCode}
-                  placeholder="共有コードを作成するとここに表示されます"
+                  placeholder="6文字コードを発行するとここに表示されます"
                 />
               </label>
               <label>
@@ -954,13 +985,13 @@ export default function Home() {
                 <textarea
                   value={importCode}
                   onChange={(event) => setImportCode(event.target.value)}
-                  placeholder="別の端末で作成した共有コードを貼り付け"
+                  placeholder="6文字コードを入力。古い長いコードも貼り付け可"
                 />
               </label>
             </div>
             <div className="actions">
               <button type="button" className="ghost" onClick={createShareCode}>
-                共有コードを作成
+                6文字コードを発行
               </button>
               <button type="button" className="ghost" onClick={() => importShareCode("append")}>
                 読み込んで追加
